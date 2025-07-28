@@ -32,7 +32,7 @@ async function extractOnsemiData(retries = 3) {
     try {
       await initializeBrowserAndPage();
 
-      await extractTechnicalDocumentation();
+      // await extractTechnicalDocumentation();
       // await extractForumInfo();
       // destroyBrowser();
       return;
@@ -59,38 +59,38 @@ async function extractTechnicalDocumentation() {
       ".filter-by-taxonomy > ul > li > .form-check + ul > li > div"
     );
 
-    // for (const filter of taxonomyFilters) {
-    try {
-      await delay(1000);
-      const filterCheckbox = await taxonomyFilters[49].$(
-        ":scope > input.form-check-input"
-      );
-      const electronicPart = await taxonomyFilters[49].$eval(
-        ":scope > label",
-        (label) => label.textContent
-      );
-      await filterCheckbox.click();
-      console.log("Clicked electronic part filter..", electronicPart);
-      // Check applicable doc types
-      await clickElementsInArray(
-        [
-          ".filter-by-type input[value='Application Notes']:not(input[disabled])",
-          ".filter-by-type input[value='Data Sheet']:not(input[disabled])",
-          ".filter-by-type input[value='White Papers']:not(input[disabled])",
-        ],
-        true
-      );
-      console.log("Clicked document type filter..");
-      // Export search results from filter
-      await exportResults(page, electronicPart, "Onsemi");
-      // Clear first and end filter
-      await clickElementsInArray(['button[aria-label="Clear Filter"]'], true);
-      console.log("Clicked reset buttons..");
-      // break;
-    } catch (error) {
-      console.log("Error:", error);
+    for (const filter of taxonomyFilters) {
+      try {
+        await delay(1000);
+        const filterCheckbox = await filter.$(
+          ":scope > input.form-check-input"
+        );
+        const electronicPart = await filter.$eval(
+          ":scope > label",
+          (label) => label.textContent
+        );
+        await filterCheckbox.click();
+        console.log("Clicked electronic part filter..", electronicPart);
+        // Check applicable doc types
+        await clickElementsInArray(
+          [
+            ".filter-by-type input[value='Application Notes']:not(input[disabled])",
+            ".filter-by-type input[value='Data Sheet']:not(input[disabled])",
+            ".filter-by-type input[value='White Papers']:not(input[disabled])",
+          ],
+          true
+        );
+        console.log("Clicked document type filter..");
+        // Export search results from filter
+        await exportResults(page, electronicPart, "Onsemi");
+        // Clear first and end filter
+        await clickElementsInArray(['button[aria-label="Clear Filter"]'], true);
+        console.log("Clicked reset buttons..");
+        // break;
+      } catch (error) {
+        console.log("Error:", error);
+      }
     }
-    // }
 
     // destroyBrowser();
   } catch (error) {
