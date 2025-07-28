@@ -1,0 +1,33 @@
+{
+  "name": "onsemi-task",
+  "version": "1.0.0",
+  "description": "onsemi scraped data",
+  "keywords": [
+    "onsemi",
+    "task",
+    "assessment"
+  ],
+  "homepage": "https://github.com/allainzenith/onsemi-task#readme",
+  "bugs": {
+    "url": "https://github.com/allainzenith/onsemi-task/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/allainzenith/onsemi-task.git"
+  },
+  "license": "ISC",
+  "author": "Allain Sabandal",
+  "type": "commonjs",
+  "main": "app.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "dependencies": {
+    "axios": "^1.11.0",
+    "csv-parse": "^6.1.0",
+    "express": "^5.1.0",
+    "puppeteer": "^24.14.0",
+    "puppeteer-extra": "^3.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2"
+  }
+}
