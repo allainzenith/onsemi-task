@@ -3,11 +3,12 @@
 // =================================================
 const https = require("https");
 const axios = require("axios");
+const { techDocHeaders, forumHeaders } = require("../config/httpHeaders.ts");
+
 const {
   destroyBrowser,
   returnPageAndBrowserInstance,
 } = require("../config/puppeteer.ts");
-
 const {
   returnFolder,
   loadCsvFileAsJson,
@@ -32,9 +33,9 @@ async function extractOnsemiData(retries = 3) {
     try {
       await initializeBrowserAndPage();
 
-      // await extractTechnicalDocumentation();
-      // await extractForumInfo();
-      // destroyBrowser();
+      await extractTechnicalDocumentation();
+      await extractForumInfo();
+      destroyBrowser();
       return;
     } catch (err) {
       console.warn(`Attempt ${i + 1} failed: ${err.message}`);
@@ -86,13 +87,10 @@ async function extractTechnicalDocumentation() {
         // Clear first and end filter
         await clickElementsInArray(['button[aria-label="Clear Filter"]'], true);
         console.log("Clicked reset buttons..");
-        // break;
       } catch (error) {
         console.log("Error:", error);
       }
     }
-
-    // destroyBrowser();
   } catch (error) {
     console.error("Error extracting documentation: ", error);
   }
@@ -124,33 +122,295 @@ async function extractDataCategory(url) {
     "Thermal Management",
   ];
   try {
-    await page.goto(url, {
-      waitUntil: "load",
-    });
-
+    const path = await returnFolder("output/forums");
     for (const category of categories) {
-      const newPage = await browser.newPage();
-      await newPage.goto(url, {
+      await page.goto(url, {
         waitUntil: "load",
       });
+      await clickDataCategory(category);
 
-      // const selector = `h6 + div[c-datacategorylistview_datacategorylistview] > div[data-category='${category}']`;
-      const selector = `div.dataBox`;
-      const categoryButton = await newPage.$eval(
-        selector,
-        (selector) => selector.outerHTML
+      const articleSelector = "c-data-category-list-view > article > h6 > a";
+
+      await page.waitForSelector(articleSelector, { timeout: 8000 });
+
+      const articleLinks = await page.$$eval(articleSelector, (elements) =>
+        elements.map((el) => el.getAttribute("data-title"))
       );
 
-      console.log(categoryButton);
+      await extractForumData(articleLinks);
 
-      // await categoryButton.click();
-      console.log("clicked section");
       await delay(3000);
-      await newPage.close();
+      await page.close();
+
+      page = await browser.newPage();
     }
   } catch (error) {
     console.error("Error extracting data category info: ", error.message);
   }
+}
+
+async function clickDataCategory(category) {
+  const selector = `h6 + div div[data-category="${category}"] h5`;
+
+  await page.waitForSelector(selector, { timeout: 8000 });
+
+  const elements = await page.$$(selector);
+
+  await elements[0].click();
+
+  console.log("Clicked data category..");
+}
+
+async function extractForumData(articleLinks) {
+  for (const link of articleLinks) {
+    await Promise.all([
+      await page.goto("https://community.onsemi.com/s/article/" + link),
+      await page.waitForSelector(
+        'article.content div[data-target-selection-name*="ArticleNumber"]',
+        { timeout: 10000 }
+      ),
+    ]);
+
+    await saveForumData(link);
+
+    await delay(5000);
+  }
+}
+
+async function saveForumData(link) {
+  try {
+    const postNameSelector =
+      'article.content div[data-target-selection-name*="ArticleNumber"] span.test-id__field-value';
+
+    const postNameFolder = await extractDataForASelector(
+      postNameSelector,
+      "textContent",
+      false
+    );
+
+    const filePath = await returnFolder(`output/forums/${postNameFolder}`);
+    const jsonData = {};
+
+    const date = await extractDataForASelector(
+      ".selfServiceArticleHeaderDetail span.uiOutputDate",
+      "textContent",
+      false
+    );
+
+    let answers = [];
+    let answer;
+
+    const answerSelector =
+      'article.content div[data-target-selection-name*="Answer"]';
+
+    const answerText = await extractDataForASelector(
+      answerSelector + " span.test-id__field-value",
+      "textContent",
+      false
+    );
+
+    answer = pushToAnswers(answerText, "text");
+    answer && answers.push(answer);
+
+    const answerimgSrcs = await page.$$eval(answerSelector + " img", (imgs) =>
+      imgs.map((img) => img?.src?.replace(/^https?\./, "https://"))
+    );
+
+    let numImgs = 1;
+
+    for (const imgSrc of answerimgSrcs) {
+      if (imgSrc) {
+        await downloadFileUsingLink(
+          filePath,
+          {
+            url: imgSrc,
+            filename: `${postNameFolder}_answer_${numImgs}`,
+          },
+          "png",
+          forumHeaders
+        );
+        numImgs++;
+      }
+    }
+
+    answer = pushToAnswers(answerimgSrcs, "image");
+    answer && answers.push(answer);
+
+    const answerHTML = await extractDataForASelector(
+      answerSelector,
+      "innerHTML",
+      false
+    );
+
+    answer = pushToAnswers(answerHTML, "html");
+    answer && answers.push(answer);
+
+    //========
+
+    const detailsSelector =
+      'article.content div[data-target-selection-name*="Details"]';
+
+    const detailsText = await extractDataForASelector(
+      detailsSelector + " span.test-id__field-value",
+      "textContent",
+      false
+    );
+
+    answer = pushToAnswers(detailsText, "text");
+    answer && answers.push(answer);
+
+    const detailimgSrcs = await page.$$eval(detailsSelector + " img", (imgs) =>
+      imgs.map((img) => img?.src?.replace(/^https?\./, "https://"))
+    );
+
+    let detailnumImgs = 1;
+
+    for (const imgSrc of detailimgSrcs) {
+      if (imgSrc) {
+        await downloadFileUsingLink(
+          filePath,
+          {
+            url: imgSrc,
+            filename: `${postNameFolder}_detail_${detailnumImgs}`,
+          },
+          "png",
+          forumHeaders
+        );
+        detailnumImgs++;
+      }
+    }
+
+    answer = pushToAnswers(detailimgSrcs, "image");
+    answer && answers.push(answer);
+
+    const detailsHTML = await extractDataForASelector(
+      detailsSelector,
+      "innerHTML",
+      false
+    );
+
+    answer = pushToAnswers(detailsHTML, "html");
+    answer && answers.push(answer);
+
+    // =================
+
+    const userNameWhoPosted = await extractDataForASelector(
+      "span.cuf-entityLinkId.forceChatterEntityLink.entityLinkHover > div",
+      "title",
+      true
+    );
+
+    const replyParentSelector = ".forceChatterThreadedComment article";
+
+    const repliesHandles = await page.$$(replyParentSelector);
+    const replies = [];
+
+    let replyImgs = 1;
+
+    for (const article of repliesHandles) {
+      const textContent = await article
+        .$eval(
+          ".cuf-feedBodyText.forceChatterMessageSegments.forceChatterFeedBodyText .feedBodyInner.Desktop",
+          (el) => el.textContent.trim()
+        )
+        .catch(() => "");
+
+      const username = await article
+        .$eval(
+          "span.cuf-entityLinkId.forceChatterEntityLink.entityLinkHover a",
+          (el) => el.getAttribute("title").trim()
+        )
+        .catch(() => "");
+
+      const imgSrcs = await article.$$eval("img", (imgs) =>
+        imgs.map((img) => img?.src?.replace(/^https?\./, "https://"))
+      );
+
+      for (const imgSrc of imgSrcs) {
+        if (imgSrc) {
+          await downloadFileUsingLink(
+            filePath,
+            {
+              url: imgSrc,
+              filename: `${postNameFolder}_reply_${replyImgs}`,
+            },
+            "png",
+            forumHeaders
+          );
+          replyImgs++;
+        }
+      }
+
+      replies.push({
+        username,
+        content: [
+          {
+            type: "text",
+            content: textContent,
+          },
+          ...imgSrcs
+            .filter(Boolean)
+            .map((src) => ({ type: "image", content: src })),
+        ],
+      });
+    }
+
+    const tags = await page.$$eval(
+      ".selfServiceArticleTopicList.selfServiceArticleLayout a",
+      (tags) =>
+        tags.map((tag) => {
+          return {
+            name: tag?.textContent?.trim(),
+            link: tag?.getAttribute("href")?.trim(),
+          };
+        })
+    );
+
+    jsonData["Link"] = await page.url();
+    jsonData["Question"] = link;
+    jsonData["Date"] = date;
+    jsonData["Best Answer"] = jsonData["Best Answer"] || {};
+    jsonData["Best Answer"]["username"] = userNameWhoPosted;
+    jsonData["Best Answer"]["content"] = answers;
+    jsonData["Replies"] = replies;
+    jsonData["Tags"] = tags;
+
+    writeFile(
+      filePath + `/${postNameFolder}.json`,
+      JSON.stringify(jsonData, null, 2)
+    );
+  } catch (error) {
+    console.error("Error saving forum data: ", error.message);
+  }
+}
+
+function pushToAnswers(answer, answerType) {
+  if (answer && typeof answer === "string") {
+    return {
+      type: answerType,
+      content: answer,
+    };
+  }
+
+  return null;
+}
+
+async function extractDataForASelector(
+  selectorName,
+  attribute,
+  useGetAttributeFunc
+) {
+  const el = await page.$(selectorName);
+  if (el) {
+    return await page.$eval(
+      selectorName,
+      (el, { attribute, useGetAttributeFunc }) =>
+        useGetAttributeFunc ? el.getAttribute(attribute) : el?.[attribute],
+      { attribute, useGetAttributeFunc }
+    );
+  }
+
+  return null;
 }
 
 async function extractTopics(url) {
@@ -184,7 +444,7 @@ async function exportResults(page, electronicPart, companyName) {
     );
 
     for (const content of jsonContent) {
-      await downloadFileUsingLink(path, content);
+      await downloadFileUsingLink(path, content, "pdf", techDocHeaders);
       // break;
     }
 
@@ -212,34 +472,25 @@ async function downloadFile(page, path, buttonSelector) {
   await destroyCDPSession(client);
 }
 
-async function downloadFileUsingLink(filePath, content) {
+async function downloadFileUsingLink(
+  filePath,
+  content,
+  fileType,
+  passedHeaders
+) {
   try {
-    const options = {
-      Accept:
-        "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-      "Accept-Encoding": "gzip, deflate, br, zstd, identity",
-      "Accept-Language": "en-US,en;q=0.9",
-      "Cache-Control": "max-age=0",
-      Connection: "keep-alive",
-      Cookie: "Apache=834f1f74.63b01b5664a61",
-      Host: "www.onsemi.com",
-      "Sec-Fetch-Dest": "document",
-      "Sec-Fetch-Mode": "navigate",
-      "Sec-Fetch-Site": "none",
-      "Sec-Fetch-User": "?1",
-      "Upgrade-Insecure-Requests": "1",
-      "User-Agent":
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36",
-      Referer: "https://www.onsemi.com/",
-    };
+    const httpsAgent = new https.Agent({
+      rejectUnauthorized: false,
+    });
 
     const response = await axios.get(content?.url, {
       responseType: "stream",
-      headers: options,
+      headers: passedHeaders,
+      httpsAgent,
     });
 
     writeFileStream(
-      filePath + `/${content?.filename?.replace("/", "")}.pdf`,
+      filePath + `/${content?.filename?.replace("/", "")}.${fileType}`,
       response.data
     );
   } catch (err) {
@@ -248,7 +499,7 @@ async function downloadFileUsingLink(filePath, content) {
     if (retries < 3) {
       retries++;
       console.log("Retrying again..");
-      await downloadFileUsingLink(filePath, content);
+      await downloadFileUsingLink(filePath, content, fileType, passedHeaders);
     } else {
       console.log("Failed after three attempts.");
       retries = 0;

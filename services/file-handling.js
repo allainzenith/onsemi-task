@@ -35,7 +35,7 @@ function writeFileStream(filePath, res) {
   });
 
   fileStream.on("error", (err) =>
-    console.error("❌ File write error:", err.message)
+    console.error("File write error:", err.message)
   );
 }
 

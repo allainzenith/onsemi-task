@@ -10,7 +10,7 @@ const express = require("express");
 
 /**
  * A straightforward Node.js app that scrapes files from specific websites
- * to collect Onsemi MOSFET data
+ * to collect Onsemi data
  */
 
 const app = express();
