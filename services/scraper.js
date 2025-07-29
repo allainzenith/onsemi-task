@@ -177,6 +177,246 @@ async function extractForumData(articleLinks) {
   }
 }
 
+async function extractTopics(url) {
+  try {
+    await page.goto(url, { waitUntil: "load" });
+    const viewMoreButtonSelector = 'button[aria-label="View More Posts"]';
+    let isButtonFound = await isViewMoreButtonFound(viewMoreButtonSelector);
+    let buttonEl;
+    let isAttached;
+    while (isButtonFound) {
+      buttonEl = await page.$(viewMoreButtonSelector);
+
+      if (buttonEl) {
+        isAttached = await buttonEl.evaluate((el) => document.contains(el));
+      }
+
+      if (!buttonEl || !isAttached) break;
+      await buttonEl?.click();
+      await delay(1000);
+      console.log("Clicking view more button..");
+    }
+
+    console.log("Finished clicking button.");
+
+    const allTopics = await page.$$eval(
+      ".compactFeedListItem div article div[data-aura-rendered-by] > a",
+      (links) => links.map((link) => link?.href)
+    );
+
+    for (const link of allTopics) {
+      await page.goto(link, { waitUntil: "load" });
+      await saveTopicData();
+    }
+  } catch (error) {
+    console.error("Error extracting topics: ", error.message);
+  }
+}
+
+async function isViewMoreButtonFound(selectorName) {
+  try {
+    await page.waitForSelector(selectorName, { timeout: 10000 });
+    return true;
+  } catch (error) {
+    return false;
+  }
+}
+
+let topicNumber = 1;
+
+async function saveTopicData() {
+  try {
+    const url = await page.url();
+    const match = url.match(/\/s\/question\/([^/]+)/);
+    const postName = match ? match[1] : `Topic_${topicNumber}`;
+
+    if (!match) {
+      topicNumber++;
+    }
+
+    const filePath = await returnFolder(`output/forums/${postName}`);
+    const jsonData = {};
+
+    // Start scraping values
+    const questionSelector =
+      ".cuf-body.cuf-questionTitle.forceChatterFeedBodyQuestionWithoutAnswer";
+
+    await page.waitForSelector(questionSelector);
+
+    const questionText = await extractDataForASelector(
+      questionSelector,
+      "textContent",
+      false
+    );
+
+    const dateSelector = ".forceChatterFeedItemHeader > div > a.cuf-timestamp";
+
+    let date = await extractDataForASelector(
+      dateSelector,
+      "textContent",
+      false
+    );
+
+    if (date) {
+      date = date.split("at")?.[0]?.trim();
+    }
+
+    // =====
+
+    let answers = [];
+
+    const answerSelector =
+      ".cuf-feedback.slds-feed__item-comments.threaded-discussion.has-comments.feed__item-comments--threadedCommunity ul li.cuf-commentLi";
+
+    const answerHandles = await page.$$(answerSelector);
+
+    let answerImgs = 1;
+
+    for (const answerHandle of answerHandles) {
+      const username = await answerHandle
+        .$eval(".cuf-commentNameLink span.uiOutputText", (el) =>
+          el.textContent.trim()
+        )
+        .catch(() => "");
+
+      const answerText = await answerHandle
+        .$eval(".slds-comment__content", (el) => el.textContent.trim())
+        .catch(() => "");
+
+      const imgSrcs = await answerHandle.$$eval("img", (imgs) =>
+        imgs.map((img) => img?.src?.replace(/^https?\./, "https://"))
+      );
+
+      const answerHTML = await answerHandle
+        .$eval("article", (el) => el?.innerHTML)
+        .catch(() => "");
+
+      for (const imgSrc of imgSrcs) {
+        if (imgSrc) {
+          await downloadFileUsingLink(
+            filePath,
+            {
+              url: imgSrc,
+              filename: `${postName}_reply_${answerImgs}`,
+            },
+            "png",
+            forumHeaders
+          );
+          answerImgs++;
+        }
+      }
+
+      answers.push({
+        username,
+        content: [
+          {
+            type: "text",
+            content: answerText,
+          },
+          {
+            type: "html",
+            content: answerHTML,
+          },
+          ...imgSrcs
+            .filter(Boolean)
+            .map((src) => ({ type: "image", content: src })),
+        ],
+      });
+    }
+
+    // Extract replies
+
+    const replyParentSelector = ".forceChatterThreadedComment";
+
+    const repliesHandles = await page.$$(replyParentSelector);
+    const replies = [];
+
+    let replyImgs = 1;
+
+    for (const article of repliesHandles) {
+      const textContent = await article
+        .$eval(
+          ".cuf-feedBodyText.forceChatterMessageSegments.forceChatterFeedBodyText .feedBodyInner.Desktop",
+          (el) => el.textContent.trim()
+        )
+        .catch(() => "");
+
+      const username = await article
+        .$eval(
+          "span.cuf-entityLinkId.forceChatterEntityLink.entityLinkHover a",
+          (el) => el.getAttribute("title").trim()
+        )
+        .catch(() => "");
+
+      const imgSrcs = await article.$$eval("img", (imgs) =>
+        imgs.map((img) => img?.src?.replace(/^https?\./, "https://"))
+      );
+
+      for (const imgSrc of imgSrcs) {
+        if (imgSrc) {
+          await downloadFileUsingLink(
+            filePath,
+            {
+              url: imgSrc,
+              filename: `${postName}_reply_${replyImgs}`,
+            },
+            "png",
+            forumHeaders
+          );
+          replyImgs++;
+        }
+      }
+
+      replies.push({
+        username,
+        content: [
+          {
+            type: "text",
+            content: textContent,
+          },
+          ...imgSrcs
+            .filter(Boolean)
+            .map((src) => ({ type: "image", content: src })),
+        ],
+      });
+    }
+
+    const tags = await page.$$eval("ul.topic-commaSeparatedList li a", (tags) =>
+      tags.map((tag) => {
+        return {
+          name: tag?.textContent?.trim(),
+          link: tag?.href?.trim(),
+        };
+      })
+    );
+
+    jsonData["Link"] = await page.url();
+    jsonData["Question"] = questionText;
+    jsonData["Title"] = questionText;
+    jsonData["Date"] = date;
+
+    jsonData["Best Answer"] = jsonData["Best Answer"] || {};
+    jsonData["Best Answer"]["content"] = answers?.[0];
+
+    jsonData["All Answers"] = jsonData["All Answers"] || {};
+    jsonData["All Answers"]["content"] =
+      answers.slice(1, answers.length)?.length > 0
+        ? answers.slice(1, answers.length)?.length
+        : answers;
+
+    jsonData["Replies"] = replies;
+
+    jsonData["Tags"] = tags;
+
+    writeFile(
+      filePath + `/${postName}.json`,
+      JSON.stringify(jsonData, null, 2)
+    );
+  } catch (error) {
+    console.error("Error saving topic data: ", error?.message);
+  }
+}
+
 async function saveForumData(link) {
   try {
     const postNameSelector =
@@ -193,6 +433,15 @@ async function saveForumData(link) {
 
     const date = await extractDataForASelector(
       ".selfServiceArticleHeaderDetail span.uiOutputDate",
+      "textContent",
+      false
+    );
+
+    const titleSelector =
+      'article.content div[data-target-selection-name*="Title"]';
+
+    const titleText = await extractDataForASelector(
+      titleSelector + " span.test-id__field-value",
       "textContent",
       false
     );
@@ -277,11 +526,11 @@ async function saveForumData(link) {
           forumHeaders
         );
         detailnumImgs++;
+
+        answer = pushToAnswers(imgSrc, "image");
+        answer && answers.push(answer);
       }
     }
-
-    answer = pushToAnswers(detailimgSrcs, "image");
-    answer && answers.push(answer);
 
     const detailsHTML = await extractDataForASelector(
       detailsSelector,
@@ -368,6 +617,7 @@ async function saveForumData(link) {
 
     jsonData["Link"] = await page.url();
     jsonData["Question"] = link;
+    jsonData["Title"] = titleText;
     jsonData["Date"] = date;
     jsonData["Best Answer"] = jsonData["Best Answer"] || {};
     jsonData["Best Answer"]["username"] = userNameWhoPosted;
@@ -411,13 +661,6 @@ async function extractDataForASelector(
   }
 
   return null;
-}
-
-async function extractTopics(url) {
-  try {
-  } catch (error) {
-    console.error("Error extracting topics: ", error.message);
-  }
 }
 
 async function exportResults(page, electronicPart, companyName) {
