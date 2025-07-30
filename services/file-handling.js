@@ -59,7 +59,7 @@ function loadCsvFileAsJson(csvPath) {
 
     return records;
   } catch (error) {
-    console.error(error);
+    console.error(error.message);
     return null;
   }
 }
@@ -79,7 +79,7 @@ async function renameFile(downloadPath, filename, newFileName) {
       console.error("File not found");
     }
   } catch (error) {
-    console.error(error);
+    console.error(error.message);
   }
 }
 

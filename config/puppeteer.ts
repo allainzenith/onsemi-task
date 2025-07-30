@@ -9,7 +9,7 @@ async function launchPuppeteerInstance() {
 
   const launchParams = {
     ignoreHTTPSErrors: true,
-    headless: false,
+    headless: "new",
     args: args,
   };
 

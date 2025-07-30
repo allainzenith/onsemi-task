@@ -36,6 +36,7 @@ async function extractOnsemiData(retries = 3) {
       await extractTechnicalDocumentation();
       await extractForumInfo();
       destroyBrowser();
+      console.log("SCRAPING FINISHED.");
       return;
     } catch (err) {
       console.warn(`Attempt ${i + 1} failed: ${err.message}`);
@@ -124,25 +125,29 @@ async function extractDataCategory(url) {
   try {
     const path = await returnFolder("output/forums");
     for (const category of categories) {
-      await page.goto(url, {
-        waitUntil: "load",
-      });
-      await clickDataCategory(category);
+      try {
+        await page.goto(url, {
+          waitUntil: "load",
+        });
+        await clickDataCategory(category);
 
-      const articleSelector = "c-data-category-list-view > article > h6 > a";
+        const articleSelector = "c-data-category-list-view > article > h6 > a";
 
-      await page.waitForSelector(articleSelector, { timeout: 8000 });
+        await page.waitForSelector(articleSelector, { timeout: 8000 });
 
-      const articleLinks = await page.$$eval(articleSelector, (elements) =>
-        elements.map((el) => el.getAttribute("data-title"))
-      );
+        const articleLinks = await page.$$eval(articleSelector, (elements) =>
+          elements.map((el) => el.getAttribute("data-title"))
+        );
 
-      await extractForumData(articleLinks);
+        await extractForumData(articleLinks);
 
-      await delay(3000);
-      await page.close();
+        await delay(3000);
+        await page.close();
 
-      page = await browser.newPage();
+        page = await browser.newPage();
+      } catch (error) {
+        console.error(error.message);
+      }
     }
   } catch (error) {
     console.error("Error extracting data category info: ", error.message);
@@ -163,17 +168,21 @@ async function clickDataCategory(category) {
 
 async function extractForumData(articleLinks) {
   for (const link of articleLinks) {
-    await Promise.all([
-      await page.goto("https://community.onsemi.com/s/article/" + link),
-      await page.waitForSelector(
-        'article.content div[data-target-selection-name*="ArticleNumber"]',
-        { timeout: 10000 }
-      ),
-    ]);
+    try {
+      await Promise.all([
+        await page.goto("https://community.onsemi.com/s/article/" + link),
+        await page.waitForSelector(
+          'article.content div[data-target-selection-name*="ArticleNumber"]',
+          { timeout: 10000 }
+        ),
+      ]);
 
-    await saveForumData(link);
+      await saveForumData(link);
 
-    await delay(5000);
+      await delay(5000);
+    } catch (error) {
+      console.error(error.message);
+    }
   }
 }
 
@@ -199,14 +208,20 @@ async function extractTopics(url) {
 
     console.log("Finished clicking button.");
 
-    const allTopics = await page.$$eval(
-      ".compactFeedListItem div article div[data-aura-rendered-by] > a",
-      (links) => links.map((link) => link?.href)
-    );
+    const allTopics = await page
+      .$$eval(
+        ".compactFeedListItem div article div[data-aura-rendered-by] > a",
+        (links) => links.map((link) => link?.href)
+      )
+      ?.filter((link) => !link.startsWith("https"));
 
     for (const link of allTopics) {
-      await page.goto(link, { waitUntil: "load" });
-      await saveTopicData();
+      try {
+        await page.goto(link, { waitUntil: "load" });
+        await saveTopicData();
+      } catch (error) {
+        console.error(error.message);
+      }
     }
   } catch (error) {
     console.error("Error extracting topics: ", error.message);
@@ -273,55 +288,63 @@ async function saveTopicData() {
     let answerImgs = 1;
 
     for (const answerHandle of answerHandles) {
-      const username = await answerHandle
-        .$eval(".cuf-commentNameLink span.uiOutputText", (el) =>
-          el.textContent.trim()
-        )
-        .catch(() => "");
+      try {
+        const username = await answerHandle
+          .$eval(".cuf-commentNameLink span.uiOutputText", (el) =>
+            el.textContent.trim()
+          )
+          .catch(() => "");
 
-      const answerText = await answerHandle
-        .$eval(".slds-comment__content", (el) => el.textContent.trim())
-        .catch(() => "");
+        const answerText = await answerHandle
+          .$eval(".slds-comment__content", (el) => el.textContent.trim())
+          .catch(() => "");
 
-      const imgSrcs = await answerHandle.$$eval("img", (imgs) =>
-        imgs.map((img) => img?.src?.replace(/^https?\./, "https://"))
-      );
+        const imgSrcs = await answerHandle.$$eval("img", (imgs) =>
+          imgs.map((img) => img?.src?.replace(/^https?\./, "https://"))
+        );
 
-      const answerHTML = await answerHandle
-        .$eval("article", (el) => el?.innerHTML)
-        .catch(() => "");
+        const answerHTML = await answerHandle
+          .$eval("article", (el) => el?.innerHTML)
+          .catch(() => "");
 
-      for (const imgSrc of imgSrcs) {
-        if (imgSrc) {
-          await downloadFileUsingLink(
-            filePath,
-            {
-              url: imgSrc,
-              filename: `${postName}_reply_${answerImgs}`,
-            },
-            "png",
-            forumHeaders
-          );
-          answerImgs++;
+        for (const imgSrc of imgSrcs) {
+          try {
+            if (imgSrc) {
+              await downloadFileUsingLink(
+                filePath,
+                {
+                  url: imgSrc,
+                  filename: `${postName}_reply_${answerImgs}`,
+                },
+                "png",
+                forumHeaders
+              );
+              answerImgs++;
+            }
+          } catch (error) {
+            console.error(error.message);
+          }
         }
-      }
 
-      answers.push({
-        username,
-        content: [
-          {
-            type: "text",
-            content: answerText,
-          },
-          {
-            type: "html",
-            content: answerHTML,
-          },
-          ...imgSrcs
-            .filter(Boolean)
-            .map((src) => ({ type: "image", content: src })),
-        ],
-      });
+        answers.push({
+          username,
+          content: [
+            {
+              type: "text",
+              content: answerText,
+            },
+            {
+              type: "html",
+              content: answerHTML,
+            },
+            ...imgSrcs
+              .filter(Boolean)
+              .map((src) => ({ type: "image", content: src })),
+          ],
+        });
+      } catch (error) {
+        console.error(error.message);
+      }
     }
 
     // Extract replies
@@ -334,51 +357,55 @@ async function saveTopicData() {
     let replyImgs = 1;
 
     for (const article of repliesHandles) {
-      const textContent = await article
-        .$eval(
-          ".cuf-feedBodyText.forceChatterMessageSegments.forceChatterFeedBodyText .feedBodyInner.Desktop",
-          (el) => el.textContent.trim()
-        )
-        .catch(() => "");
+      try {
+        const textContent = await article
+          .$eval(
+            ".cuf-feedBodyText.forceChatterMessageSegments.forceChatterFeedBodyText .feedBodyInner.Desktop",
+            (el) => el.textContent.trim()
+          )
+          .catch(() => "");
 
-      const username = await article
-        .$eval(
-          "span.cuf-entityLinkId.forceChatterEntityLink.entityLinkHover a",
-          (el) => el.getAttribute("title").trim()
-        )
-        .catch(() => "");
+        const username = await article
+          .$eval(
+            "span.cuf-entityLinkId.forceChatterEntityLink.entityLinkHover a",
+            (el) => el.getAttribute("title").trim()
+          )
+          .catch(() => "");
 
-      const imgSrcs = await article.$$eval("img", (imgs) =>
-        imgs.map((img) => img?.src?.replace(/^https?\./, "https://"))
-      );
+        const imgSrcs = await article.$$eval("img", (imgs) =>
+          imgs.map((img) => img?.src?.replace(/^https?\./, "https://"))
+        );
 
-      for (const imgSrc of imgSrcs) {
-        if (imgSrc) {
-          await downloadFileUsingLink(
-            filePath,
-            {
-              url: imgSrc,
-              filename: `${postName}_reply_${replyImgs}`,
-            },
-            "png",
-            forumHeaders
-          );
-          replyImgs++;
+        for (const imgSrc of imgSrcs) {
+          if (imgSrc) {
+            await downloadFileUsingLink(
+              filePath,
+              {
+                url: imgSrc,
+                filename: `${postName}_reply_${replyImgs}`,
+              },
+              "png",
+              forumHeaders
+            );
+            replyImgs++;
+          }
         }
-      }
 
-      replies.push({
-        username,
-        content: [
-          {
-            type: "text",
-            content: textContent,
-          },
-          ...imgSrcs
-            .filter(Boolean)
-            .map((src) => ({ type: "image", content: src })),
-        ],
-      });
+        replies.push({
+          username,
+          content: [
+            {
+              type: "text",
+              content: textContent,
+            },
+            ...imgSrcs
+              .filter(Boolean)
+              .map((src) => ({ type: "image", content: src })),
+          ],
+        });
+      } catch (error) {
+        console.error(error.message);
+      }
     }
 
     const tags = await page.$$eval("ul.topic-commaSeparatedList li a", (tags) =>
@@ -468,17 +495,21 @@ async function saveForumData(link) {
     let numImgs = 1;
 
     for (const imgSrc of answerimgSrcs) {
-      if (imgSrc) {
-        await downloadFileUsingLink(
-          filePath,
-          {
-            url: imgSrc,
-            filename: `${postNameFolder}_answer_${numImgs}`,
-          },
-          "png",
-          forumHeaders
-        );
-        numImgs++;
+      try {
+        if (imgSrc) {
+          await downloadFileUsingLink(
+            filePath,
+            {
+              url: imgSrc,
+              filename: `${postNameFolder}_answer_${numImgs}`,
+            },
+            "png",
+            forumHeaders
+          );
+          numImgs++;
+        }
+      } catch (error) {
+        console.error(error.message);
       }
     }
 
@@ -515,20 +546,24 @@ async function saveForumData(link) {
     let detailnumImgs = 1;
 
     for (const imgSrc of detailimgSrcs) {
-      if (imgSrc) {
-        await downloadFileUsingLink(
-          filePath,
-          {
-            url: imgSrc,
-            filename: `${postNameFolder}_detail_${detailnumImgs}`,
-          },
-          "png",
-          forumHeaders
-        );
-        detailnumImgs++;
+      try {
+        if (imgSrc) {
+          await downloadFileUsingLink(
+            filePath,
+            {
+              url: imgSrc,
+              filename: `${postNameFolder}_detail_${detailnumImgs}`,
+            },
+            "png",
+            forumHeaders
+          );
+          detailnumImgs++;
 
-        answer = pushToAnswers(imgSrc, "image");
-        answer && answers.push(answer);
+          answer = pushToAnswers(imgSrc, "image");
+          answer && answers.push(answer);
+        }
+      } catch (error) {
+        console.error(error.message);
       }
     }
 
@@ -557,51 +592,59 @@ async function saveForumData(link) {
     let replyImgs = 1;
 
     for (const article of repliesHandles) {
-      const textContent = await article
-        .$eval(
-          ".cuf-feedBodyText.forceChatterMessageSegments.forceChatterFeedBodyText .feedBodyInner.Desktop",
-          (el) => el.textContent.trim()
-        )
-        .catch(() => "");
+      try {
+        const textContent = await article
+          .$eval(
+            ".cuf-feedBodyText.forceChatterMessageSegments.forceChatterFeedBodyText .feedBodyInner.Desktop",
+            (el) => el.textContent.trim()
+          )
+          .catch(() => "");
 
-      const username = await article
-        .$eval(
-          "span.cuf-entityLinkId.forceChatterEntityLink.entityLinkHover a",
-          (el) => el.getAttribute("title").trim()
-        )
-        .catch(() => "");
+        const username = await article
+          .$eval(
+            "span.cuf-entityLinkId.forceChatterEntityLink.entityLinkHover a",
+            (el) => el.getAttribute("title").trim()
+          )
+          .catch(() => "");
 
-      const imgSrcs = await article.$$eval("img", (imgs) =>
-        imgs.map((img) => img?.src?.replace(/^https?\./, "https://"))
-      );
+        const imgSrcs = await article.$$eval("img", (imgs) =>
+          imgs.map((img) => img?.src?.replace(/^https?\./, "https://"))
+        );
 
-      for (const imgSrc of imgSrcs) {
-        if (imgSrc) {
-          await downloadFileUsingLink(
-            filePath,
-            {
-              url: imgSrc,
-              filename: `${postNameFolder}_reply_${replyImgs}`,
-            },
-            "png",
-            forumHeaders
-          );
-          replyImgs++;
+        for (const imgSrc of imgSrcs) {
+          try {
+            if (imgSrc) {
+              await downloadFileUsingLink(
+                filePath,
+                {
+                  url: imgSrc,
+                  filename: `${postNameFolder}_reply_${replyImgs}`,
+                },
+                "png",
+                forumHeaders
+              );
+              replyImgs++;
+            }
+          } catch (error) {
+            console.error(error.message);
+          }
         }
-      }
 
-      replies.push({
-        username,
-        content: [
-          {
-            type: "text",
-            content: textContent,
-          },
-          ...imgSrcs
-            .filter(Boolean)
-            .map((src) => ({ type: "image", content: src })),
-        ],
-      });
+        replies.push({
+          username,
+          content: [
+            {
+              type: "text",
+              content: textContent,
+            },
+            ...imgSrcs
+              .filter(Boolean)
+              .map((src) => ({ type: "image", content: src })),
+          ],
+        });
+      } catch (error) {
+        console.error(error.message);
+      }
     }
 
     const tags = await page.$$eval(
@@ -687,8 +730,11 @@ async function exportResults(page, electronicPart, companyName) {
     );
 
     for (const content of jsonContent) {
-      await downloadFileUsingLink(path, content, "pdf", techDocHeaders);
-      // break;
+      try {
+        await downloadFileUsingLink(path, content, "pdf", techDocHeaders);
+      } catch (error) {
+        console.error(error.message);
+      }
     }
 
     deleteFile(dlPath);
@@ -785,7 +831,7 @@ async function clickElementsInArray(selectorNameArr, isFilter) {
 
   for (const sName of selectorNameArr) {
     const elArr = await page.$$(sName);
-    elementArray = elementArray.concat(elArr);
+    elementArray = elArr && elementArray.concat(elArr);
   }
 
   for (const el of elementArray) {
